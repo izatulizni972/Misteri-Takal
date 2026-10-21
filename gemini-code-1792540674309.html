@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kotak Misteri Takal - Edutainment Sains</title>
+
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Poppins:wght@500;700;800&display=swap" rel="stylesheet">
+
+    <!-- MediaPipe Hands & Camera Utils (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            user-select: none;
+            overflow: hidden;
+        }
+        .font-game {
+            font-family: 'Fredoka One', cursive;
+        }
+        .mirror-x {
+            transform: scaleX(-1);
+        }
+        /* Animasi Kotak Buka */
+        @keyframes openGift {
+            0% { transform: scale(1) rotate(0deg); }
+            25% { transform: scale(1.15) rotate(-10deg); }
+            50% { transform: scale(1.15) rotate(10deg); }
+            75% { transform: scale(1.25) rotate(-5deg); }
+            100% { transform: scale(1.3); opacity: 0.9; }
+        }
+        .animate-open {
+            animation: openGift 0.6s ease-in-out forwards;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white w-screen h-screen relative flex flex-col justify-between p-4 overflow-hidden">
+
+    <!-- 1. LATAR WEBCAM & CANVAS INTERAKTIF -->
+    <div class="absolute inset-0 z-0">
+        <video id="webcam" class="w-full h-full object-cover mirror-x" autoplay playsinline></video>
+        <canvas id="output_canvas" class="absolute inset-0 w-full h-full object-cover mirror-x"></canvas>
+        <div class="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]"></div>
+    </div>
+
+    <!-- KURSOR JARI TELUNJUK SURATAN (OVERLAY) -->
+    <div id="hand-cursor" class="fixed pointer-events-none z-50 transform -translate-x-1/2 -translate-y-1/2 hidden transition-all duration-75">
+        <div class="relative flex items-center justify-center">
+            <!-- Lingkaran Dwell Progress -->
+            <svg class="w-16 h-16 transform -rotate-90">
+                <circle cx="32" cy="32" r="26" stroke="rgba(255, 255, 255, 0.4)" stroke-width="6" fill="transparent"/>
+                <circle id="dwell-circle" cx="32" cy="32" r="26" stroke="#fbbf24" stroke-width="6" fill="transparent"
+                        stroke-dasharray="163.36" stroke-dashoffset="163.36" class="transition-all duration-75" />
+            </svg>
+            <div class="absolute w-6 h-6 bg-yellow-400 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
+        </div>
+    </div>
+
+    <!-- 2. ANTARAMUKA PERMAINAN (Z-INDEX ATAS) -->
+    <div class="relative z-10 flex flex-col h-full justify-between pointer-events-none">
+
+        <!-- HEADER: Tajuk, Skor, Pemasa, & Markah Tertinggi -->
+        <header class="flex justify-between items-center bg-slate-900/80 backdrop-blur-md border border-slate-700/60 p-4 rounded-2xl shadow-2xl">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-game text-yellow-400 tracking-wide drop-shadow-md">🎁 Kotak Misteri Takal</h1>
+                <p class="text-xs text-blue-200">Sains Sekolah Rendah • Tunjukkan Jari Telunjuk Untuk Memilih</p>
+            </div>
+            
+            <div class="flex items-center gap-4 text-center font-bold">
+                <div class="bg-indigo-600/80 px-4 py-2 rounded-xl border border-indigo-400">
+                    <div class="text-xs text-indigo-200 uppercase">Soalan</div>
+                    <div id="q-count" class="text-xl text-white">1 / 4</div>
+                </div>
+                <div class="bg-emerald-600/80 px-4 py-2 rounded-xl border border-emerald-400">
+                    <div class="text-xs text-emerald-200 uppercase">Masa</div>
+                    <div id="timer-display" class="text-xl text-white">0s</div>
+                </div>
+                <div class="bg-amber-600/80 px-4 py-2 rounded-xl border border-amber-400">
+                    <div class="text-xs text-amber-200 uppercase">Skor</div>
+                    <div id="score-display" class="text-xl text-white">0</div>
+                </div>
+                <div class="bg-purple-600/80 px-4 py-2 rounded-xl border border-purple-400 hidden sm:block">
+                    <div class="text-xs text-purple-200 uppercase">Rekod Tertinggi</div>
+                    <div id="high-score-display" class="text-xl text-yellow-300">0</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- SOALAN UTAMA -->
+        <div class="my-auto mx-auto max-w-3xl w-full text-center bg-slate-900/90 backdrop-blur-lg border-2 border-yellow-400/80 p-5 rounded-2xl shadow-2xl">
+            <span class="bg-yellow-400 text-slate-950 font-extrabold text-xs px-3 py-1 rounded-full uppercase tracking-wider mb-2 inline-block">Soalan Sains</span>
+            <h2 id="question-text" class="text-xl md:text-2xl font-bold text-white leading-relaxed">
+                Memuatkan Soalan...
+            </h2>
+        </div>
+
+        <!-- STATUS ISYARAT / STATUS PENILAIAN -->
+        <div id="status-box" class="mx-auto bg-slate-800/80 px-4 py-1.5 rounded-full text-xs font-semibold text-yellow-300 border border-slate-600 mb-2">
+            Status: Mengesan Kamera & Tangan...
+        </div>
+    </div>
+
+    <!-- 3. 4 KOTAK HADIAH MISTERI DI PENJURU SKRIN (POSISI FIXED) -->
+    <div id="box-0" class="gift-box fixed top-24 left-6 z-20 w-64 md:w-72 bg-gradient-to-br from-pink-600 to-rose-700 border-4 border-rose-300 rounded-2xl p-4 shadow-2xl flex flex-col items-center transition-transform transform">
+        <div class="gift-icon text-5xl mb-2 filter drop-shadow">🎁</div>
+        <div class="opt-label bg-black/40 text-rose-200 font-bold px-2 py-0.5 rounded text-xs mb-1">A</div>
+        <div class="opt-text text-center text-xs md:text-sm font-semibold text-white leading-snug">--</div>
+    </div>
+
+    <div id="box-1" class="gift-box fixed top-24 right-6 z-20 w-64 md:w-72 bg-gradient-to-br from-blue-600 to-indigo-700 border-4 border-blue-300 rounded-2xl p-4 shadow-2xl flex flex-col items-center transition-transform transform">
+        <div class="gift-icon text-5xl mb-2 filter drop-shadow">🎁</div>
+        <div class="opt-label bg-black/40 text-blue-200 font-bold px-2 py-0.5 rounded text-xs mb-1">B</div>
+        <div class="opt-text text-center text-xs md:text-sm font-semibold text-white leading-snug">--</div>
+    </div>
+
+    <div id="box-2" class="gift-box fixed bottom-6 left-6 z-20 w-64 md:w-72 bg-gradient-to-br from-emerald-600 to-teal-700 border-4 border-emerald-300 rounded-2xl p-4 shadow-2xl flex flex-col items-center transition-transform transform">
+        <div class="gift-icon text-5xl mb-2 filter drop-shadow">🎁</div>
+        <div class="opt-label bg-black/40 text-emerald-200 font-bold px-2 py-0.5 rounded text-xs mb-1">C</div>
+        <div class="opt-text text-center text-xs md:text-sm font-semibold text-white leading-snug">--</div>
+    </div>
+
+    <div id="box-3" class="gift-box fixed bottom-6 right-6 z-20 w-64 md:w-72 bg-gradient-to-br from-amber-600 to-orange-700 border-4 border-amber-300 rounded-2xl p-4 shadow-2xl flex flex-col items-center transition-transform transform">
+        <div class="gift-icon text-5xl mb-2 filter drop-shadow">🎁</div>
+        <div class="opt-label bg-black/40 text-amber-200 font-bold px-2 py-0.5 rounded text-xs mb-1">D</div>
+        <div class="opt-text text-center text-xs md:text-sm font-semibold text-white leading-snug">--</div>
+    </div>
+
+    <!-- 4. MODAL SKRIN PENAMAT MARKAH TINGGI -->
+    <div id="game-over-modal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center hidden">
+        <div class="bg-slate-900 border-4 border-yellow-400 p-8 rounded-3xl max-w-lg w-full text-center shadow-2xl transform scale-95 transition-all">
+            <h2 class="text-4xl font-game text-yellow-400 mb-2">TAHNIAH! 🎉</h2>
+            <p class="text-slate-300 text-sm mb-6">Anda telah menyelesaikan semua cabaran Kotak Misteri Takal!</p>
+
+            <div class="space-y-3 mb-6">
+                <div class="flex justify-between bg-slate-800 p-3 rounded-xl border border-slate-700">
+                    <span class="text-slate-400">Jumlah Soalan Betul:</span>
+                    <span id="final-correct" class="font-bold text-green-400">0 / 4</span>
+                </div>
+                <div class="flex justify-between bg-slate-800 p-3 rounded-xl border border-slate-700">
+                    <span class="text-slate-400">Masa Diambil:</span>
+                    <span id="final-time" class="font-bold text-cyan-400">0 saat</span>
+                </div>
+                <div class="flex justify-between bg-slate-800 p-3 rounded-xl border border-slate-700">
+                    <span class="text-slate-400">Jumlah Skor Akhir:</span>
+                    <span id="final-score" class="font-bold text-yellow-300 text-xl">0</span>
+                </div>
+                <div id="new-high-score-msg" class="text-emerald-400 font-extrabold text-sm animate-bounce hidden">
+                    🏆 REKOD BAHARU TERCAPAI! 🏆
+                </div>
+            </div>
+
+            <button onclick="restartGame()" class="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 text-slate-950 font-bold py-3.5 px-6 rounded-xl shadow-lg transition transform hover:scale-105 pointer-events-auto">
+                Main Semula 🔄
+            </button>
+        </div>
+    </div>
+
+    <!-- LOGIK SKRIP PERMAINAN -->
+    <script>
+        // --- 1. SINTESIS KESAN BUNYI (Web Audio API) ---
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioCtx();
+        }
+
+        function playSound(type) {
+            initAudio();
+            if (!audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'hover') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(450, now + 0.08);
+                gain.gain.setValueAtTime(0.05, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else if (type === 'correct') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(523.25, now); // C5
+                osc.frequency.setValueAtTime(659.25, now + 0.1); // E5
+                osc.frequency.setValueAtTime(783.99, now + 0.2); // G5
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.4);
+                osc.start(now);
+                osc.stop(now + 0.4);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.setValueAtTime(150, now + 0.15);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'win') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, now);
+                osc.frequency.setValueAtTime(554.37, now + 0.15);
+                osc.frequency.setValueAtTime(659.25, now + 0.3);
+                osc.frequency.setValueAtTime(880, now + 0.45);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.7);
+                osc.start(now);
+                osc.stop(now + 0.7);
+            }
+        }
+
+        // --- 2. DATA SOALAN SAINS (TAKAL - SEKOAH RENDAH) ---
+        const questionsData = [
+            {
+                q: "Apakah maksud takal?",
+                options: [
+                    "Mesin ringkas yang mempunyai roda bersalur dan tali",
+                    "Permukaan rata yang disengetkan untuk memindahkan beban",
+                    "Batang yang berputar pada satu titik fulkrum",
+                    "Roda berigi yang saling bersambung antara satu sama lain"
+                ],
+                answer: 0
+            },
+            {
+                q: "Apakah fungsi utama takal?",
+                options: [
+                    "Memotong objek yang keras dengan mudah",
+                    "Memudahkan kerja mengangkat beban ke tempat tinggi",
+                    "Menyambungkan dua bahagian yang berasingan",
+                    "Meluncurkan objek dari kawasan tinggi ke rendah"
+                ],
+                answer: 1
+            },
+            {
+                q: "Antara berikut, yang manakah merupakan kegunaan takal dalam kehidupan harian?",
+                options: [
+                    "Pintu pagar gelangsar automatik",
+                    "Gunting pemotong kertas",
+                    "Menaikkan bendera pada tiang bendera",
+                    "Pembalut skru pada kayu"
+                ],
+                answer: 2
+            },
+            {
+                q: "Antara berikut, yang manakah merupakan jenis takal?",
+                options: [
+                    "Takal Tetap, Takal Bergerak dan Takal Kombinasi",
+                    "Takal Serong dan Takal Landai",
+                    "Takal Lengkung dan Takal Lurus",
+                    "Takal Berat dan Takal Ringan"
+                ],
+                answer: 0
+            }
+        ];
+
+        // --- 3. PEMATUHAN KEADAAN PERMAINAN (GAME STATE) ---
+        let currentQIndex = 0;
+        let score = 0;
+        let correctAnswersCount = 0;
+        let gameActive = false;
+
+        let startTime = 0;
+        let timerInterval = null;
+        let elapsedTime = 0;
+
+        let dwellBoxIndex = null;
+        let dwellStartTime = null;
+        const DWELL_DURATION = 1000; // 1 Saat dwell time
+        let isProcessingAnswer = false;
+
+        let highScore = localStorage.getItem('takal_highscore') || 0;
+        document.getElementById('high-score-display').innerText = highScore;
+
+        // Element DOM
+        const cursorEl = document.getElementById('hand-cursor');
+        const dwellCircle = document.getElementById('dwell-circle');
+        const statusBox = document.getElementById('status-box');
+
+        // --- 4. LOGIK PERMAINAN & KONTROL SOALAN ---
+        function startGame() {
+            currentQIndex = 0;
+            score = 0;
+            correctAnswersCount = 0;
+            elapsedTime = 0;
+            gameActive = true;
+            isProcessingAnswer = false;
+
+            document.getElementById('score-display').innerText = score;
+            document.getElementById('game-over-modal').classList.add('hidden');
+
+            startTimer();
+            loadQuestion();
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                if (gameActive) {
+                    elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+                    document.getElementById('timer-display').innerText = elapsedTime + "s";
+                }
+            }, 1000);
+        }
+
+        function loadQuestion() {
+            if (currentQIndex >= questionsData.length) {
+                endGame();
+                return;
+            }
+
+            isProcessingAnswer = false;
+            resetBoxStyles();
+
+            const qData = questionsData[currentQIndex];
+            document.getElementById('q-count').innerText = `${currentQIndex + 1} / ${questionsData.length}`;
+            document.getElementById('question-text').innerText = qData.q;
+
+            // Masukkan pilihan jawapan ke dalam 4 kotak
+            for (let i = 0; i < 4; i++) {
+                const box = document.getElementById(`box-${i}`);
+                box.querySelector('.opt-text').innerText = qData.options[i];
+                box.querySelector('.gift-icon').innerText = '🎁';
+                box.classList.remove('animate-open', 'bg-emerald-600', 'bg-rose-600', 'border-emerald-400', 'border-rose-400', 'opacity-50');
+            }
+        }
+
+        function resetBoxStyles() {
+            for (let i = 0; i < 4; i++) {
+                const box = document.getElementById(`box-${i}`);
+                box.style.transform = "scale(1)";
+            }
+        }
+
+        function processChoice(boxIndex) {
+            if (isProcessingAnswer || !gameActive) return;
+            isProcessingAnswer = true;
+
+            const qData = questionsData[currentQIndex];
+            const selectedBox = document.getElementById(`box-${boxIndex}`);
+            const giftIcon = selectedBox.querySelector('.gift-icon');
+
+            selectedBox.classList.add('animate-open');
+
+            if (boxIndex === qData.answer) {
+                // Jawapan Betul
+                playSound('correct');
+                giftIcon.innerText = '🌟';
+                selectedBox.classList.add('bg-emerald-600', 'border-emerald-400');
+                
+                // Kira Skor Berasaskan Masa
+                const timeBonus = Math.max(100 - (elapsedTime * 2), 20);
+                const questionScore = 200 + timeBonus;
+                score += questionScore;
+                correctAnswersCount++;
+                document.getElementById('score-display').innerText = score;
+                statusBox.innerText = `Tahniah! Jawapan Tepat (+${questionScore} Mata)`;
+            } else {
+                // Jawapan Salah
+                playSound('wrong');
+                giftIcon.innerText = '❌';
+                selectedBox.classList.add('bg-rose-600', 'border-rose-400');
+
+                // Tunjukkan jawapan yang betul
+                const correctBox = document.getElementById(`box-${qData.answer}`);
+                correctBox.querySelector('.gift-icon').innerText = '✨';
+                correctBox.classList.add('bg-emerald-600', 'border-emerald-400');
+
+                statusBox.innerText = `Kurang Tepat! Jawapan Betul ialah ${String.fromCharCode(65 + qData.answer)}`;
+            }
+
+            // Pindah ke soalan seterusnya selepas delay
+            setTimeout(() => {
+                currentQIndex++;
+                loadQuestion();
+            }, 2200);
+        }
+
+        function endGame() {
+            gameActive = false;
+            clearInterval(timerInterval);
+            playSound('win');
+
+            document.getElementById('final-correct').innerText = `${correctAnswersCount} / ${questionsData.length}`;
+            document.getElementById('final-time').innerText = `${elapsedTime} saat`;
+            document.getElementById('final-score').innerText = score;
+
+            const isNewHigh = score > highScore;
+            if (isNewHigh) {
+                highScore = score;
+                localStorage.setItem('takal_highscore', highScore);
+                document.getElementById('high-score-display').innerText = highScore;
+                document.getElementById('new-high-score-msg').classList.remove('hidden');
+            } else {
+                document.getElementById('new-high-score-msg').classList.add('hidden');
+            }
+
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        function restartGame() {
+            startGame();
+        }
+
+        // --- 5. DETEKSI DWELL/HOLD PADA KOTAK JAWAPAN ---
+        function checkDwellInteraction(cursorX, cursorY) {
+            if (isProcessingAnswer || !gameActive) {
+                resetDwell();
+                return;
+            }
+
+            let hoveredBoxIndex = null;
+
+            for (let i = 0; i < 4; i++) {
+                const box = document.getElementById(`box-${i}`);
+                const rect = box.getBoundingClientRect();
+
+                if (
+                    cursorX >= rect.left &&
+                    cursorX <= rect.right &&
+                    cursorY >= rect.top &&
+                    cursorY <= rect.bottom
+                ) {
+                    hoveredBoxIndex = i;
+                    break;
+                }
+            }
+
+            if (hoveredBoxIndex !== null) {
+                if (dwellBoxIndex !== hoveredBoxIndex) {
+                    // Baru menuding ke kotak baharu
+                    dwellBoxIndex = hoveredBoxIndex;
+                    dwellStartTime = Date.now();
+                    playSound('hover');
+                    document.getElementById(`box-${hoveredBoxIndex}`).style.transform = "scale(1.05)";
+                } else {
+                    // Masih bertahan di atas kotak yang sama
+                    const elapsed = Date.now() - dwellStartTime;
+                    const progress = Math.min(elapsed / DWELL_DURATION, 1);
+                    
+                    // Kemaskini bulatan indikator Dwell (Perimeter = 2 * PI * 26 ≈ 163.36)
+                    const dashoffset = 163.36 * (1 - progress);
+                    dwellCircle.style.strokeDashoffset = dashoffset;
+
+                    if (progress >= 1) {
+                        // Cukup 1 saat dwell
+                        resetDwell();
+                        processChoice(hoveredBoxIndex);
+                    }
+                }
+            } else {
+                resetDwell();
+            }
+        }
+
+        function resetDwell() {
+            if (dwellBoxIndex !== null) {
+                document.getElementById(`box-${dwellBoxIndex}`).style.transform = "scale(1)";
+            }
+            dwellBoxIndex = null;
+            dwellStartTime = null;
+            dwellCircle.style.strokeDashoffset = "163.36";
+        }
+
+        // --- 6. INTEGRASI MEDIAPIPE HANDS (CDN) ---
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function onResults(results) {
+            // Lukis video ke canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Dapatkan koordinat Jari Telunjuk (Index Finger Tip = Landmark 8)
+                const indexTip = landmarks[8];
+
+                // Kerana video dicerminkan (mirror-x), x ditukar (1 - x)
+                const cursorX = (1 - indexTip.x) * window.innerWidth;
+                const cursorY = indexTip.y * window.innerHeight;
+
+                // Tunjukkan Kursor Jari
+                cursorEl.style.left = `${cursorX}px`;
+                cursorEl.style.top = `${cursorY}px`;
+                cursorEl.classList.remove('hidden');
+
+                statusBox.innerText = "Tangan Dikesan: Tuding dan tahan pada kotak jawapan!";
+
+                // Semak dwell kursor pada kotak
+                checkDwellInteraction(cursorX, cursorY);
+            } else {
+                cursorEl.classList.add('hidden');
+                resetDwell();
+                statusBox.innerText = "Sila hulurkan tangan anda ke hadapan kamera web";
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // Mula Kamera & Permainan
+        camera.start().then(() => {
+            startGame();
+        });
+    </script>
+</body>
+</html>
